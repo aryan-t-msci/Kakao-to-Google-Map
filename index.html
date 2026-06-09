@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kakao → Google · Coordinate Locator</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- proj4: only a last-ditch fallback to convert Kakao's WCONGNAMUL numbers; reliable paths never need it -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+
+<style>
+  :root{
+    --ink:#12171c; --ink-soft:#5a656e; --ink-faint:#8b959c;
+    --paper:#e7ecee; --card:#ffffff; --line:#d4dbdf; --line-soft:#e6eaec;
+    --grid:rgba(18,23,28,.045);
+    --amber:#d9480f; --amber-press:#b83a0b; --amber-tint:#fdf0e9;
+    --confirm:#2b8a3e; --confirm-tint:#e7f3ea;
+    --warn:#c0392b; --warn-tint:#fbeae7;
+    --blue:#1c6fb8; --blue-tint:#eaf1f7;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(18,23,28,.06), 0 8px 24px -16px rgba(18,23,28,.4);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; font-family:'Inter',system-ui,sans-serif; color:var(--ink);
+    background-color:var(--paper);
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:28px 28px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:28px 20px 80px}
+  a{color:var(--blue);text-underline-offset:2px}
+
+  /* masthead */
+  .masthead{display:flex;align-items:flex-start;gap:16px;margin:8px 0 18px}
+  .glyph{flex:0 0 auto;width:46px;height:46px;border-radius:8px;background:var(--ink);position:relative;margin-top:2px}
+  .glyph::before,.glyph::after{content:"";position:absolute;background:var(--amber)}
+  .glyph::before{left:50%;top:9px;bottom:9px;width:1.5px;transform:translateX(-50%)}
+  .glyph::after{top:50%;left:9px;right:9px;height:1.5px;transform:translateY(-50%)}
+  .glyph i{position:absolute;left:50%;top:50%;width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%);border:1.5px solid var(--amber)}
+  h1{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:23px;letter-spacing:-.01em;margin:0 0 3px}
+  h1 .arrow{color:var(--amber);font-weight:500}
+  .tagline{color:var(--ink-soft);font-size:13.5px;max-width:64ch;margin:0}
+
+  /* mode banner */
+  .mode{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:var(--radius);
+    border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow);margin-bottom:16px;font-size:13px}
+  .mode .badge{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;padding:4px 10px;border-radius:20px;white-space:nowrap}
+  .mode.lite .badge{background:var(--blue-tint);color:var(--blue)}
+  .mode.full .badge{background:var(--confirm-tint);color:var(--confirm)}
+  .mode .msg{flex:1 1 auto;color:var(--ink-soft)}
+  .mode .msg b{color:var(--ink)}
+  .mode a.jump{white-space:nowrap;font-weight:500;cursor:pointer}
+
+  /* panels */
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:16px}
+  .panel-head{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--line-soft)}
+  .panel-head h2{font-family:'Space Grotesk',sans-serif;font-weight:500;font-size:12px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-soft);margin:0}
+  .panel-body{padding:18px}
+
+  /* inputs */
+  label.field{display:block;margin-bottom:14px}
+  label.field:last-of-type{margin-bottom:0}
+  .lbl{display:block;font-size:12.5px;font-weight:500;color:var(--ink);margin-bottom:6px}
+  .lbl .hint{font-weight:400;color:var(--ink-faint)}
+  input[type=text]{width:100%;font-family:'IBM Plex Mono',monospace;font-size:13.5px;color:var(--ink);
+    background:#fff;border:1px solid var(--line);border-radius:8px;padding:11px 13px;transition:border-color .12s,box-shadow .12s}
+  input[type=text]::placeholder{color:var(--ink-faint);font-family:'Inter',sans-serif}
+  input[type=text]:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .field.disabled{opacity:.55}
+  .field.disabled input{background:var(--paper);cursor:not-allowed}
+  .lockmsg{font-size:11.5px;color:var(--ink-faint);margin-top:5px}
+  .lockmsg a{cursor:pointer}
+
+  .tip{font-size:12px;color:var(--ink-soft);margin:12px 0 0;padding:10px 12px;background:var(--paper);border-radius:8px;border:1px solid var(--line-soft)}
+  .tip b{color:var(--ink)}
+  .tip code{font-family:'IBM Plex Mono',monospace;font-size:11px;background:#fff;padding:1px 5px;border-radius:4px;border:1px solid var(--line-soft)}
+
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  button{font-family:'Inter',sans-serif;cursor:pointer;border:none;border-radius:8px;font-size:13.5px;font-weight:500;transition:background .12s,color .12s,border-color .12s}
+  button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+  .btn-primary{background:var(--amber);color:#fff;padding:11px 20px}
+  .btn-primary:hover{background:var(--amber-press)}
+  .btn-primary:disabled{background:var(--line);color:var(--ink-faint);cursor:not-allowed}
+  .btn-ghost{background:#fff;color:var(--ink);border:1px solid var(--line);padding:10px 16px}
+  .btn-ghost:hover{border-color:var(--ink-soft)}
+
+  .status{font-size:13px;margin-top:14px;min-height:18px;display:flex;align-items:flex-start;gap:8px}
+  .status.err{color:var(--warn)} .status.work{color:var(--ink-soft)} .status.ok{color:var(--confirm)}
+  .spin{width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;flex:0 0 auto;margin-top:2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* candidates */
+  .cands{display:flex;flex-direction:column;gap:10px}
+  .cand{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:9px;background:#fff;transition:border-color .12s,background .12s}
+  .cand:hover{border-color:var(--ink-soft)}
+  .cand.sel{border-color:var(--amber);background:var(--amber-tint)}
+  .cand .pick{flex:0 0 auto;width:16px;height:16px;border-radius:50%;border:2px solid var(--line);margin-top:3px;position:relative}
+  .cand.sel .pick{border-color:var(--amber)}
+  .cand.sel .pick::after{content:"";position:absolute;inset:2px;border-radius:50%;background:var(--amber)}
+  .cand .meta{flex:1 1 auto;min-width:0}
+  .cand .nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cand .ad{font-size:12.5px;color:var(--ink-soft);margin-top:2px;word-break:break-word}
+  .cand .co{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-faint);margin-top:4px}
+  .tag{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:20px;white-space:nowrap}
+  .tag.match{background:var(--confirm);color:#fff}
+  .tag.src{background:var(--paper);color:var(--ink-soft);border:1px solid var(--line)}
+  .tag.poi{background:var(--blue-tint);color:var(--blue)}
+
+  /* result readout */
+  #result{display:none}
+  .readout{display:flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .readout .rule{flex:0 0 5px;background:var(--amber)}
+  .readout .body{flex:1 1 auto;padding:18px 20px;min-width:0}
+  .readout .pname{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:2px}
+  .readout .paddr{font-size:12.5px;color:var(--ink-soft);margin-bottom:16px;word-break:break-word}
+  .coordgrid{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end}
+  .coordcell .ck{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:3px}
+  .coordcell .cv{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:25px;letter-spacing:-.01em}
+  .pairline{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+  .pairval{font-family:'IBM Plex Mono',monospace;font-size:14px;background:var(--paper);border:1px solid var(--line-soft);border-radius:7px;padding:8px 12px}
+  .chip{font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:20px;display:inline-flex;align-items:center;gap:6px}
+  .chip.ok{background:var(--confirm-tint);color:var(--confirm)}
+  .chip.bad{background:var(--warn-tint);color:var(--warn)}
+  .chip .pulse{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .copybtn{font-family:'Inter',sans-serif;font-size:11.5px;font-weight:500;color:var(--ink-soft);background:#fff;border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+  .copybtn:hover{border-color:var(--ink-soft);color:var(--ink)}
+  .copybtn.done{background:var(--confirm);border-color:var(--confirm);color:#fff}
+
+  .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:16px}
+  .linkcard{display:flex;flex-direction:column;gap:3px;padding:13px 15px;border:1px solid var(--line);border-radius:9px;background:#fff;text-decoration:none;color:var(--ink);transition:border-color .12s,transform .08s}
+  .linkcard:hover{border-color:var(--amber);transform:translateY(-1px)}
+  .linkcard.primary{border-color:var(--amber);background:var(--amber-tint)}
+  .linkcard .lk-t{font-weight:600;font-size:13.5px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .linkcard .lk-t .go{color:var(--amber)}
+  .linkcard .lk-s{font-size:11.5px;color:var(--ink-soft)}
+  .linkcard .lk-row{display:flex;gap:8px;align-items:center;margin-top:7px}
+  .linkcard .lk-url{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+
+  /* maps */
+  .maps{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.maps{grid-template-columns:1fr}}
+  .mapbox{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#dfe5e7;position:relative}
+  .mapbox .cap{position:absolute;top:10px;left:10px;z-index:5;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;letter-spacing:.08em;background:rgba(18,23,28,.82);color:#fff;padding:4px 9px;border-radius:5px;pointer-events:none}
+  .mapframe{width:100%;height:340px;border:0;display:block}
+  #kakaoMap{width:100%;height:340px}
+  .mapempty{height:340px;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--ink-soft);font-size:12.5px}
+  .mapempty .em-t{font-weight:600;color:var(--ink)}
+  .mapempty a{cursor:pointer}
+  .confirmnote{font-size:12px;color:var(--ink-soft);margin-top:12px;display:flex;gap:8px;align-items:flex-start}
+  .confirmnote .b{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-top:6px}
+
+  /* settings / key */
+  .settings .panel-body{padding:0}
+  .set-intro{padding:16px 18px;font-size:13px;color:var(--ink-soft);border-bottom:1px solid var(--line-soft)}
+  .set-intro b{color:var(--ink)}
+  .steps{padding:6px 18px 4px}
+  .step{display:flex;gap:14px;padding:14px 0;border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:none}
+  .step .no{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .step .sc{flex:1 1 auto;min-width:0}
+  .step .st{font-weight:600;font-size:13.5px;margin-bottom:3px}
+  .step .sb{font-size:12.5px;color:var(--ink-soft)}
+  .step .sb code{font-family:'IBM Plex Mono',monospace;font-size:11.5px;background:var(--paper);padding:1px 6px;border-radius:4px;border:1px solid var(--line-soft);word-break:break-all}
+  .origin-box{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--blue-tint);border:1px solid #cfe0ee;border-radius:8px;padding:9px 11px}
+  .origin-box .ol{font-size:11.5px;color:var(--blue);font-weight:600}
+  .origin-box .ov{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);word-break:break-all}
+  .keyentry{padding:16px 18px;border-top:1px solid var(--line-soft);background:#fbfcfc;border-radius:0 0 var(--radius) var(--radius)}
+  .key-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .key-row .grow{flex:1 1 320px;min-width:200px}
+  .key-test{font-size:12.5px;margin-top:10px;min-height:16px}
+  .key-test.ok{color:var(--confirm)} .key-test.err{color:var(--warn)} .key-test.work{color:var(--ink-soft)}
+  .hostbox{padding:16px 18px;border-top:1px solid var(--line-soft);font-size:13px;color:var(--ink-soft)}
+  .hostbox summary{cursor:pointer;color:var(--ink);font-weight:500;list-style:none}
+  .hostbox summary::-webkit-details-marker{display:none}
+  .hostbox summary::before{content:"▸";color:var(--amber);margin-right:7px;display:inline-block;transition:transform .15s}
+  .hostbox[open] summary::before{transform:rotate(90deg)}
+  .hostbox ul{margin:10px 0 0;padding-left:20px}
+  .hostbox li{margin:6px 0}
+  .hostbox code{font-family:'IBM Plex Mono',monospace;font-size:11.5px;background:var(--paper);padding:1px 6px;border-radius:4px;border:1px solid var(--line-soft)}
+
+  .footnote{font-size:12px;color:var(--ink-faint);margin-top:26px;line-height:1.7;border-top:1px solid var(--line-soft);padding-top:16px}
+  .footnote code{font-family:'IBM Plex Mono',monospace;font-size:11px}
+
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="glyph"><i></i></div>
+    <div>
+      <h1>Kakao&nbsp;<span class="arrow">→</span>&nbsp;Google Coordinate Locator</h1>
+      <p class="tagline">Turn a Kakao facility into its exact coordinate and open the same rooftop on Google Maps. Paste a Kakao place link, check the pin on the satellite, copy the result. No software to install.</p>
+    </div>
+  </header>
+
+  <!-- MODE BANNER (auto) -->
+  <div class="mode lite" id="modeBanner">
+    <span class="badge" id="modeBadge">Lite mode</span>
+    <span class="msg" id="modeMsg">Paste a Kakao place link and confirm on the Google satellite. Works with no setup.</span>
+    <a class="jump" id="modeJump">Turn on Kakao-side view →</a>
+  </div>
+
+  <!-- LOCATE -->
+  <section class="panel">
+    <div class="panel-head"><h2>Find a place</h2></div>
+    <div class="panel-body">
+
+      <label class="field">
+        <span class="lbl">Kakao place link <span class="hint">— or paste coordinates as <code style="font-family:'IBM Plex Mono',monospace">lat, lng</code></span></span>
+        <input type="text" id="urlInput" placeholder="https://place.map.kakao.com/838484446" autocomplete="off" spellcheck="false" />
+      </label>
+
+      <label class="field" id="textField">
+        <span class="lbl">Or search by name / address <span class="hint">— Korean works best</span></span>
+        <input type="text" id="textInput" placeholder="엘지에이치와이비씨엠   ·   or   경북 구미시 산동읍 5공단1로 20" autocomplete="off" spellcheck="false" />
+        <span class="lockmsg" id="textLock" style="display:none">Needs the Kakao key — <a id="textLockJump">turn on Kakao-side view</a>. Works fine without it if you paste a place link above.</span>
+      </label>
+
+      <div class="tip" id="tip"><b>Quickest path:</b> paste the Kakao place link and press <b>Find</b>. Add a name or address too and the link gets matched against the results, so the exact place Kakao shows is picked automatically.</div>
+
+      <div class="actions">
+        <button class="btn-primary" id="resolveBtn">Find coordinate</button>
+        <button class="btn-ghost" id="clearBtn">Clear</button>
+      </div>
+
+      <div class="status" id="status" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- CANDIDATES -->
+  <section class="panel" id="candPanel" style="display:none">
+    <div class="panel-head"><h2>Matches <span id="candCount" style="color:var(--ink-faint);font-weight:400"></span></h2></div>
+    <div class="panel-body"><div class="cands" id="cands"></div></div>
+  </section>
+
+  <!-- RESULT -->
+  <section id="result">
+    <section class="panel">
+      <div class="panel-head"><h2>Coordinate · WGS84</h2></div>
+      <div class="panel-body">
+        <div class="readout">
+          <div class="rule"></div>
+          <div class="body">
+            <div class="pname" id="rName">—</div>
+            <div class="paddr" id="rAddr"></div>
+            <div class="coordgrid">
+              <div class="coordcell"><div class="ck">Latitude</div><div class="cv" id="rLat">—</div></div>
+              <div class="coordcell"><div class="ck">Longitude</div><div class="cv" id="rLng">—</div></div>
+              <div class="coordcell"><div class="ck">Validity</div><div class="chip ok" id="rValid"><span class="pulse"></span><span id="rValidTxt">In South Korea</span></div></div>
+            </div>
+            <div class="pairline">
+              <span class="pairval" id="rPair">—</span>
+              <button class="copybtn" data-copy="pair">Copy “lat, lng”</button>
+              <button class="copybtn" data-copy="lat">Copy lat</button>
+              <button class="copybtn" data-copy="lng">Copy lng</button>
+            </div>
+            <div class="links" id="links"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Confirm · same rooftop on both</h2></div>
+      <div class="panel-body">
+        <div class="maps">
+          <div class="mapbox">
+            <span class="cap">KAKAO SKYVIEW</span>
+            <div id="kakaoMap"><div class="mapempty" id="kakaoEmpty"><span class="em-t">Kakao-side view is off</span><span>You'll still get the exact coordinate and the Google satellite on the right. To see Kakao here too, <a id="kakaoEmptyJump">turn on Kakao-side view</a>.</span></div></div>
+          </div>
+          <div class="mapbox">
+            <span class="cap">GOOGLE SATELLITE</span>
+            <iframe class="mapframe" id="googleFrame" title="Google satellite preview" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+          </div>
+        </div>
+        <div class="confirmnote"><span class="b"></span><span>Make sure the pin sits on the <b>same building</b> before you trust it. POI pins sometimes land on a gate or entrance — if it's off, pick a different match or paste a corrected <code>lat, lng</code> above.</span></div>
+      </div>
+    </section>
+  </section>
+
+  <!-- SETTINGS / KEY -->
+  <section class="panel settings" id="settings">
+    <div class="panel-head"><h2>Kakao-side view · setup</h2><span class="key-status" id="setStatus" style="font-size:12px;color:var(--ink-soft)"></span></div>
+    <div class="panel-body">
+      <div class="set-intro">
+        <b>You don't need this for spot-checks.</b> The coordinate, the Google satellite, and all the links work without it. This switches on the <b>Kakao satellite next to Google</b> and name/address search. It's a one-time setup and it only works when this page is opened from a real web address (a hosted link or <code>localhost</code>) — not from a double-clicked file.
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="no">1</div>
+          <div class="sc">
+            <div class="st">Get a free Kakao JavaScript key</div>
+            <div class="sb">Go to <a href="https://developers.kakao.com" target="_blank" rel="noopener">developers.kakao.com</a>, sign in, open <b>My Application → Add an application</b>. Then open the app → <b>App Keys</b> and copy the <b>JavaScript key</b> (not the REST or Admin key).</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="no">2</div>
+          <div class="sc">
+            <div class="st">Switch the Kakao Map feature on</div>
+            <div class="sb">In the app: <b>Kakao Map → Activation → ON</b>. Without this, searches return nothing.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="no">3</div>
+          <div class="sc">
+            <div class="st">Register the web address you'll open this from</div>
+            <div class="sb">In the app: <b>App Settings → Platform → Web</b>, and add the site domain. Kakao only accepts requests from addresses you register here.</div>
+            <div class="origin-box"><span class="ol">This page is open at:</span><span class="ov" id="originVal">—</span></div>
+            <div class="sb" id="originHint" style="margin-top:8px"></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="no">4</div>
+          <div class="sc">
+            <div class="st">Paste the key and test it</div>
+            <div class="sb">Paste the JavaScript key below and press <b>Test &amp; save</b>. The tool checks it against this exact address and turns on the Kakao panel if it works.</div>
+            <div class="keyentry" style="padding:12px 0 0;border:none;background:none">
+              <div class="key-row">
+                <input type="text" id="keyInput" class="grow" placeholder="Paste your Kakao JavaScript key" autocomplete="off" spellcheck="false" />
+                <button class="btn-primary" id="keySave">Test &amp; save</button>
+                <button class="btn-ghost" id="keyClear">Clear</button>
+              </div>
+              <div class="key-test" id="keyTest"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <details class="hostbox" open>
+        <summary>Put it on a link for everyone (recommended for sharing)</summary>
+        <p style="margin:10px 0 0">Don't send the file around — host it once and share the link. Colleagues just open it: no key, no install, and the Kakao panel works for them too.</p>
+        <ul>
+          <li><b>Set the key once.</b> Open this file in a text editor and put your JavaScript key in <code>BAKED_KEY</code> near the top of the script. It now ships inside the page, so nobody else pastes anything. A JavaScript key is domain-locked, so it's safe to expose as long as step 3 is done — it won't work from any other address.</li>
+          <li><b>GitHub Pages — works fully.</b> Put this file (named <code>index.html</code>) in a repo, turn on Pages, and you get a link like <code>https://you.github.io/repo/</code>. Register <code>https://you.github.io</code> in step 3. The side-by-side satellite works because that's a real HTTPS address Kakao accepts.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+
+  <p class="footnote">
+    Coordinates are WGS84, the system Google, Kakao and GPS share. The Google link uses <code>?q=lat,lng</code>, which pins the exact point and sidesteps Korean-address search quality entirely. The Lite path reads Kakao's place page through a public relay, so it's best-effort — fine for spot-checks. Doing thousands of rows? A Kakao <em>REST</em> key in a script is the batch tool, not a browser.
+  </p>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =========================================================
+     ADMIN — to share this as a link with the Kakao panel ON for
+     everyone: paste your Kakao JavaScript key between the quotes
+     below, host this file (GitHub Pages works well), and register
+     the hosted address with Kakao. See the "Put it on a link"
+     box inside the tool, or the README, for the exact steps.
+     Leave empty to let each person add their own key, or to run
+     in Lite mode. A JavaScript key is domain-locked, so once the
+     hosted address is registered it can't be used anywhere else.
+     ========================================================= */
+  const BAKED_KEY = "086bb002b99936bd3565fa01537d4df3";
+
+  // ---- constants ----
+  const KEY_STORE = "kakao_js_key_v2";
+  const KR = { latMin:33.0, latMax:38.7, lngMin:124.5, lngMax:131.9 }; // South Korea bbox (incl. Jeju)
+  const PROXIES = [
+    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+    u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+    u => "https://thingproxy.freeboard.io/fetch/" + u
+  ];
+  proj4.defs("EPSG:5181","+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=500000 +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs");
+
+  // ---- dom ----
+  const $ = id => document.getElementById(id);
+  const urlInput=$("urlInput"), textInput=$("textInput"), textField=$("textField"), textLock=$("textLock");
+  const statusEl=$("status");
+  const candPanel=$("candPanel"), candsEl=$("cands"), candCount=$("candCount");
+  const resultEl=$("result");
+  const keyInput=$("keyInput"), keyTest=$("keyTest"), setStatus=$("setStatus");
+
+  let kakaoReady=false, geocoder=null, places=null, kMap=null, kMarker=null;
+  let candidates=[], selected=null;
+  const isFileProto = location.protocol === "file:";
+
+  // ---- key storage ----
+  function readStore(){ try{return localStorage.getItem(KEY_STORE)||"";}catch(e){return "";} }
+  function writeStore(v){ try{ v?localStorage.setItem(KEY_STORE,v):localStorage.removeItem(KEY_STORE);}catch(e){} }
+  function effectiveKey(){ return readStore() || BAKED_KEY || ""; }
+
+  // ---- environment / mode UI ----
+  function showOrigin(){
+    const ov=$("originVal"), hint=$("originHint");
+    if(isFileProto){
+      ov.textContent = "(opened from a file — no web address)";
+      hint.innerHTML = "A double-clicked file has no address Kakao can accept, so the Kakao panel can't turn on here. Either host the file and register that link (see the Share box below), or run a local server such as <code>python -m http.server 5500</code> and open <code>http://localhost:5500</code> — then register <code>http://localhost:5500</code> in step 3.";
+    }else{
+      ov.textContent = location.origin;
+      hint.innerHTML = "Register this <b>exact</b> value in step 3 — for example just <code>"+escapeHtml(location.origin)+"</code>.";
+    }
+  }
+
+  function setMode(full){
+    const banner=$("modeBanner"), badge=$("modeBadge"), msg=$("modeMsg"), jump=$("modeJump");
+    if(full){
+      banner.className="mode full"; badge.textContent="Full mode";
+      msg.innerHTML="<b>Kakao + Google side by side.</b> Search by link, name, or address.";
+      jump.style.display="none";
+      textField.classList.remove("disabled"); textLock.style.display="none"; textInput.disabled=false;
+      setStatus_("Kakao-side view is on.");
+    }else{
+      banner.className="mode lite"; badge.textContent="Lite mode";
+      msg.textContent="Paste a Kakao place link and confirm on the Google satellite. Works with no setup.";
+      jump.style.display="";
+      textField.classList.add("disabled"); textLock.style.display=""; textInput.disabled=true;
+      setStatus_(isFileProto ? "Off — opened from a file." : "Off — add a key below.");
+    }
+  }
+  function setStatus_(t){ setStatus.textContent=t; }
+
+  // jumps to settings
+  function gotoSettings(){ $("settings").scrollIntoView({behavior:"smooth",block:"start"}); keyInput.focus({preventScroll:true}); }
+  ["modeJump","textLockJump","kakaoEmptyJump"].forEach(id=>{ const el=$(id); if(el) el.addEventListener("click",gotoSettings); });
+
+  // ---- SDK loading + functional test ----
+  function loadSDK(key){
+    return new Promise((resolve,reject)=>{
+      document.querySelectorAll("script[data-kakao]").forEach(s=>s.remove());
+      try{ window.kakao = undefined; }catch(e){}
+      const s=document.createElement("script"); s.dataset.kakao="1";
+      s.src="https://dapi.kakao.com/v2/maps/sdk.js?appkey="+encodeURIComponent(key)+"&libraries=services&autoload=false";
+      s.onload=()=>{
+        if(!window.kakao||!window.kakao.maps){reject(new Error("loaded but kakao.maps missing"));return;}
+        window.kakao.maps.load(()=>{
+          try{ geocoder=new kakao.maps.services.Geocoder(); places=new kakao.maps.services.Places(); resolve(); }
+          catch(e){ reject(e); }
+        });
+      };
+      s.onerror=()=>reject(new Error("network/script error"));
+      document.head.appendChild(s);
+    });
+  }
+  // verify key+domain actually work by doing a trivial search
+  function probe(){
+    return new Promise(resolve=>{
+      let done=false;
+      const t=setTimeout(()=>{ if(!done){done=true;resolve({ok:false,reason:"timeout"});} },7000);
+      try{
+        places.keywordSearch("서울",(data,status)=>{
+          if(done) return; done=true; clearTimeout(t);
+          if(status===kakao.maps.services.Status.OK || status===kakao.maps.services.Status.ZERO_RESULT) resolve({ok:true});
+          else resolve({ok:false,reason:"rejected"});
+        });
+      }catch(e){ if(!done){done=true;clearTimeout(t);resolve({ok:false,reason:"exception"});} }
+    });
+  }
+
+  async function activateKey(key,{interactive}={}){
+    kakaoReady=false;
+    if(!key){ setMode(false); return {ok:false,reason:"nokey"}; }
+    if(isFileProto){ setMode(false); return {ok:false,reason:"file"}; }
+    if(interactive){ keyTest.className="key-test work"; keyTest.textContent="Testing the key against "+location.origin+"…"; }
+    try{
+      await loadSDK(key);
+      const r=await probe();
+      if(r.ok){ kakaoReady=true; setMode(true); if(interactive){keyTest.className="key-test ok";keyTest.textContent="Works — Kakao-side view is on.";} return {ok:true}; }
+      setMode(false);
+      if(interactive){
+        keyTest.className="key-test err";
+        keyTest.textContent = r.reason==="timeout"
+          ? "No response. Check the internet connection and that the Kakao Map feature is ON (step 2)."
+          : "Kakao rejected this key for "+location.origin+". Make sure that exact address is registered (step 3) and the key is the JavaScript key (step 1).";
+      }
+      return r;
+    }catch(e){
+      setMode(false);
+      if(interactive){ keyTest.className="key-test err"; keyTest.textContent="Couldn't load the Kakao SDK. Check the internet connection, then try again."; }
+      return {ok:false,reason:"load"};
+    }
+  }
+
+  $("keySave").addEventListener("click",async()=>{
+    const k=keyInput.value.trim();
+    if(!k){ keyTest.className="key-test err"; keyTest.textContent="Paste a key first."; return; }
+    const r=await activateKey(k,{interactive:true});
+    if(r.ok){ writeStore(k); if(selected) renderKakaoMap(selected.lat,selected.lng); }
+  });
+  $("keyClear").addEventListener("click",()=>{ keyInput.value=""; writeStore(""); keyTest.className="key-test"; keyTest.textContent=""; activateKey(BAKED_KEY); });
+
+  // ---- helpers ----
+  function inKorea(lat,lng){ return lat>=KR.latMin&&lat<=KR.latMax&&lng>=KR.lngMin&&lng<=KR.lngMax; }
+  function round7(n){ return Math.round(n*1e7)/1e7; }
+  function setStat(kind,msg,spin){ statusEl.className="status "+(kind||""); statusEl.innerHTML=(spin?'<span class="spin"></span>':'')+'<span>'+msg+'</span>'; }
+
+  function extractPlaceId(text){
+    if(!text) return null;
+    const m=text.match(/place\.map\.kakao\.com\/(?:[a-z]+\/)?(\d{4,})/i) || text.match(/(?:^|[^\d])(\d{6,})(?:[^\d]|$)/);
+    return m?m[1]:null;
+  }
+  function parseLatLng(text){
+    if(!text) return null;
+    const m=text.trim().match(/^\s*(-?\d{1,3}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    if(!m) return null;
+    let a=parseFloat(m[1]), b=parseFloat(m[2]);
+    if(inKorea(a,b)) return {lat:a,lng:b};
+    if(inKorea(b,a)) return {lat:b,lng:a};
+    return {lat:a,lng:b};
+  }
+  function scanForWgs(any){
+    const found=[];
+    function near(lat,lng){ if(typeof lat==="number"&&typeof lng==="number"&&inKorea(lat,lng)) found.push({lat,lng}); }
+    function walk(o){
+      if(!o||typeof o!=="object") return;
+      const la=parseFloat(o.lat??o.latitude??o.y??o.wgs84Y??o.point_y);
+      const ln=parseFloat(o.lng??o.lon??o.longitude??o.x??o.wgs84X??o.point_x);
+      if(!isNaN(la)&&!isNaN(ln)) near(la,ln);
+      for(const k in o){ if(typeof o[k]==="object") walk(o[k]); }
+    }
+    if(typeof any==="object") walk(any);
+    if(found.length) return found[0];
+    const txt=typeof any==="string"?any:JSON.stringify(any);
+    const re=/(3[3-8]\.\d{3,})\D{0,40}?(12[4-9]\.\d{3,}|13[0-1]\.\d{3,})|(12[4-9]\.\d{3,}|13[0-1]\.\d{3,})\D{0,40}?(3[3-8]\.\d{3,})/g;
+    let m;
+    while((m=re.exec(txt))){
+      let lat,lng;
+      if(m[1]){lat=parseFloat(m[1]);lng=parseFloat(m[2]);} else {lng=parseFloat(m[3]);lat=parseFloat(m[4]);}
+      if(inKorea(lat,lng)) return {lat,lng};
+    }
+    const wc=txt.match(/"?(?:wpointx|wx|cx)"?\s*[:=]\s*"?(\d{5,})"?[\s\S]{0,80}?"?(?:wpointy|wy|cy)"?\s*[:=]\s*"?(\d{5,})"?/i);
+    if(wc){ try{ const cong=[parseFloat(wc[1])/2.5,parseFloat(wc[2])/2.5]; const out=proj4("EPSG:5181","WGS84",cong); if(out&&inKorea(out[1],out[0])) return {lat:out[1],lng:out[0]}; }catch(e){} }
+    return null;
+  }
+  async function fetchViaProxies(url){
+    for(const wrap of PROXIES){
+      try{ const r=await fetch(wrap(url),{headers:{"Accept":"application/json,text/html"}}); if(!r.ok) continue; const t=await r.text(); if(t&&t.length>20) return t; }
+      catch(e){}
+    }
+    return null;
+  }
+  async function resolveDirect(placeId){
+    const eps=["https://place.map.kakao.com/main/v/"+placeId,"https://place.map.kakao.com/m/main/v/"+placeId,"https://place.map.kakao.com/"+placeId];
+    for(const ep of eps){
+      const body=await fetchViaProxies(ep); if(!body) continue;
+      let parsed=null; try{parsed=JSON.parse(body);}catch(e){parsed=body;}
+      const pt=scanForWgs(parsed);
+      if(pt){
+        let name="Kakao place "+placeId, addr="";
+        if(parsed&&typeof parsed==="object"){ const bi=parsed.basicInfo||{}; name=bi.placenamefull||bi.placename||name; const ad=bi.address||{}; addr=(ad.newaddr&&(ad.newaddr.newaddrfull||ad.newaddr.newaddrfullsplit))||ad.fullAddress||""; }
+        return {name,address:addr,lat:round7(pt.lat),lng:round7(pt.lng),placeId,source:"Kakao place page",isPoi:true};
+      }
+    }
+    return null;
+  }
+  function searchKeyword(q){
+    return new Promise(res=>{ if(!places) return res([]);
+      places.keywordSearch(q,(data,status)=>{ if(status!==kakao.maps.services.Status.OK) return res([]);
+        res(data.map(d=>({name:d.place_name,address:d.road_address_name||d.address_name||"",lat:round7(parseFloat(d.y)),lng:round7(parseFloat(d.x)),placeId:extractPlaceId(d.place_url||"")||null,source:"Kakao keyword (POI pin)",isPoi:true}))); },{size:15}); });
+  }
+  function searchAddress(q){
+    return new Promise(res=>{ if(!geocoder) return res([]);
+      geocoder.addressSearch(q,(result,status)=>{ if(status!==kakao.maps.services.Status.OK) return res([]);
+        res(result.map(r=>({name:(r.road_address&&r.road_address.building_name)||r.address_name,address:(r.road_address&&r.road_address.address_name)||r.address_name||"",lat:round7(parseFloat(r.y)),lng:round7(parseFloat(r.x)),placeId:null,source:"Kakao address (parcel pin)",isPoi:false}))); }); });
+  }
+  function dedupe(list){ const seen=new Set(),out=[]; for(const c of list){ if(!c||isNaN(c.lat)||isNaN(c.lng)) continue; const k=c.lat.toFixed(5)+","+c.lng.toFixed(5)+"|"+c.source; if(seen.has(k)) continue; seen.add(k); out.push(c); } return out; }
+
+  // ---- main ----
+  async function resolve(){
+    candidates=[]; selected=null; candPanel.style.display="none"; resultEl.style.display="none"; candsEl.innerHTML="";
+    const urlRaw=urlInput.value.trim(), textRaw=textInput.value.trim();
+    const placeId=extractPlaceId(urlRaw)||(urlRaw&&/^\d{6,}$/.test(urlRaw)?urlRaw:null);
+
+    if(!urlRaw && !textRaw){ setStat("err","Paste a Kakao place link, a name/address, or a lat,lng pair."); return; }
+
+    const direct=parseLatLng(urlRaw)||parseLatLng(textRaw);
+    if(direct){ candidates=[{name:"Manual coordinate",address:"",lat:round7(direct.lat),lng:round7(direct.lng),placeId,source:"Pasted lat,lng",isPoi:false}]; finish(placeId); return; }
+
+    if(placeId){
+      setStat("work","Reading the Kakao place page for "+placeId+"…",true);
+      const d=await resolveDirect(placeId); if(d) candidates.push(d);
+    }
+    if(textRaw && kakaoReady){
+      setStat("work","Searching Kakao for “"+textRaw+"”…",true);
+      const [kw,ad]=await Promise.all([searchKeyword(textRaw),searchAddress(textRaw)]);
+      candidates.push(...kw,...ad);
+    }
+    candidates=dedupe(candidates);
+
+    if(candidates.length===0){
+      if(placeId && !kakaoReady){
+        setStat("err", isFileProto
+          ? "Couldn't read the place page (the relay may be down or blocked from a local file). Try again, or host the page for the reliable Kakao search — see setup below."
+          : "Couldn't read the place page right now. Try again, or turn on Kakao-side view below and search by name/address instead.");
+      }else if(placeId && kakaoReady && !textRaw){
+        setStat("err","The place link didn't return a coordinate. Add the place name or address (Korean works best) and press Find again.");
+      }else if(textRaw && !kakaoReady){
+        setStat("err","Searching by name/address needs the Kakao key. Turn on Kakao-side view below, or paste a place link instead.");
+      }else{
+        setStat("err","No match. Try the Korean name or a Korean road address, e.g. 경북 구미시 산동읍 5공단1로 20.");
+      }
+      return;
+    }
+    finish(placeId);
+  }
+
+  function finish(matchId){
+    candidates.sort((a,b)=>{ const am=(matchId&&a.placeId===matchId)?0:1,bm=(matchId&&b.placeId===matchId)?0:1; if(am!==bm) return am-bm; return (b.isPoi?1:0)-(a.isPoi?1:0); });
+    renderCands(matchId); select(candidates[0]);
+    const n=candidates.length;
+    setStat("ok", n+(n>1?" matches found":" match found")+" — check it on the satellite before copying.");
+  }
+
+  function renderCands(matchId){
+    candsEl.innerHTML="";
+    candidates.forEach(c=>{
+      const el=document.createElement("button"); el.className="cand"; el.type="button";
+      const isMatch=matchId&&c.placeId===matchId;
+      el.innerHTML='<span class="pick"></span><span class="meta">'+
+        '<span class="nm">'+escapeHtml(c.name||"(unnamed)")+(isMatch?'<span class="tag match">matches your link</span>':'')+(c.isPoi?'<span class="tag poi">POI</span>':'<span class="tag src">address</span>')+'</span>'+
+        (c.address?'<span class="ad">'+escapeHtml(c.address)+'</span>':'')+
+        '<span class="co">'+c.lat.toFixed(7)+', '+c.lng.toFixed(7)+'  ·  '+escapeHtml(c.source)+(c.placeId?'  ·  id '+c.placeId:'')+'</span></span>';
+      el.addEventListener("click",()=>select(c)); el._cand=c; candsEl.appendChild(el);
+    });
+    candPanel.style.display="block"; candCount.textContent="· "+candidates.length;
+  }
+  function select(c){ selected=c; [...candsEl.children].forEach(el=>el.classList.toggle("sel",el._cand===c)); renderResult(c); }
+
+  // ---- links ----
+  const gPin=(la,ln)=>"https://www.google.com/maps/search/?api=1&query="+la+","+ln;
+  const gSat=(la,ln)=>"https://www.google.com/maps/@"+la+","+ln+",19z/data=!3m1!1e3";
+  const gEmbed=(la,ln)=>"https://maps.google.com/maps?q="+la+","+ln+"&z=19&t=k&hl=en&output=embed";
+  const kLink=(nm,la,ln)=>"https://map.kakao.com/link/map/"+encodeURIComponent(nm||"place")+","+la+","+ln;
+  const nLink=(la,ln)=>"https://map.naver.com/p/?c="+ln+","+la+",18,0,0,0,dh";
+
+  function renderResult(c){
+    const lat=c.lat,lng=c.lng;
+    $("rName").textContent=c.name||"Resolved point";
+    $("rAddr").textContent=c.address||"";
+    $("rLat").textContent=lat.toFixed(7); $("rLng").textContent=lng.toFixed(7);
+    $("rPair").textContent=lat.toFixed(7)+", "+lng.toFixed(7);
+    const ok=inKorea(lat,lng), v=$("rValid");
+    v.className="chip "+(ok?"ok":"bad"); $("rValidTxt").textContent=ok?"In South Korea":"⚠ Outside Korea — check input";
+    const links=$("links"); links.innerHTML="";
+    links.appendChild(linkCard("Google Maps — pin","Exact point. Copy this into your sheet.",gPin(lat,lng),true));
+    links.appendChild(linkCard("Google Maps — satellite","Opens in satellite at zoom 19.",gSat(lat,lng),false));
+    links.appendChild(linkCard("Kakao Map — reopen","Compare against the original on Kakao.",kLink(c.name,lat,lng),false));
+    links.appendChild(linkCard("Naver Map — center","Centers Naver here (pin needs its app).",nLink(lat,lng),false));
+    $("googleFrame").src=gEmbed(lat,lng);
+    renderKakaoMap(lat,lng);
+    resultEl.style.display="block";
+  }
+  function linkCard(title,sub,url,primary){
+    const a=document.createElement("a"); a.className="linkcard"+(primary?" primary":""); a.href=url; a.target="_blank"; a.rel="noopener";
+    a.innerHTML='<span class="lk-t">'+escapeHtml(title)+'<span class="go">↗</span></span><span class="lk-s">'+escapeHtml(sub)+'</span><span class="lk-row"><span class="lk-url">'+escapeHtml(url)+'</span></span>';
+    const b=document.createElement("button"); b.className="copybtn"; b.textContent="Copy URL";
+    b.addEventListener("click",e=>{e.preventDefault();e.stopPropagation();doCopy(url,b,"Copy URL");});
+    a.querySelector(".lk-row").appendChild(b); return a;
+  }
+  function renderKakaoMap(lat,lng){
+    if(!kakaoReady) return;
+    const cont=$("kakaoMap"), pos=new kakao.maps.LatLng(lat,lng);
+    if(!kMap){ cont.innerHTML=""; kMap=new kakao.maps.Map(cont,{center:pos,level:2}); kMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID); kMarker=new kakao.maps.Marker({position:pos}); kMarker.setMap(kMap); }
+    else { kMap.setCenter(pos); kMarker.setPosition(pos); }
+    setTimeout(()=>{ try{kMap.relayout(); kMap.setCenter(pos);}catch(e){} },80);
+  }
+
+  // ---- copy ----
+  function doCopy(text,btn,reset){
+    const ok=()=>{ btn.textContent="Copied"; btn.classList.add("done"); setTimeout(()=>{btn.textContent=reset;btn.classList.remove("done");},1100); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok).catch(()=>fb(text,ok)); } else fb(text,ok);
+  }
+  function fb(text,cb){ const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");cb&&cb();}catch(e){} document.body.removeChild(ta); }
+  document.querySelectorAll(".copybtn[data-copy]").forEach(btn=>{
+    btn.addEventListener("click",()=>{ if(!selected) return; const w=btn.dataset.copy; const t=w==="lat"?selected.lat.toFixed(7):w==="lng"?selected.lng.toFixed(7):selected.lat.toFixed(7)+", "+selected.lng.toFixed(7); doCopy(t,btn,btn.textContent); });
+  });
+
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  // ---- wire ----
+  $("resolveBtn").addEventListener("click",resolve);
+  $("clearBtn").addEventListener("click",()=>{ urlInput.value=""; textInput.value=""; candsEl.innerHTML=""; candPanel.style.display="none"; resultEl.style.display="none"; setStat("",""); });
+  [urlInput,textInput].forEach(el=>el.addEventListener("keydown",e=>{ if(e.key==="Enter"){e.preventDefault();resolve();}}));
+
+  // ---- init ----
+  showOrigin();
+  setMode(false);
+  const k=effectiveKey();
+  if(k){ keyInput.value = readStore() ? k : ""; activateKey(k); } // try silently on load
+})();
+</script>
+</body>
+</html>
