@@ -298,13 +298,13 @@
       <details class="howto">
         <summary>How to use</summary>
         <div class="howto-body">
-          <b>Quickest path:</b> paste the Kakao place link and press <b>Find</b>. Add a name or address too and the link gets matched against the results, so the exact place Kakao shows is picked automatically. Korean names and addresses resolve best. You can also paste raw <code>lat, lng</code> to jump straight to the links and preview.
+          <b>Quickest path:</b> paste a <b>Kakao</b> or <b>Naver</b> place link and press <b>Find</b>. For Kakao you can also add a name or address, and the link is matched against the results so the exact place is picked automatically. Korean names and addresses resolve best. You can also paste raw <code>lat, lng</code> to jump straight to the links and preview.
         </div>
       </details>
 
       <label class="field">
-        <span class="lbl">Kakao place link <span class="hint">— or paste coordinates as <code style="font-family:'IBM Plex Mono',monospace">lat, lng</code></span></span>
-        <input type="text" id="urlInput" placeholder="https://place.map.kakao.com/838484446" autocomplete="off" spellcheck="false" />
+        <span class="lbl">Kakao or Naver place link <span class="hint">— or paste coordinates as <code style="font-family:'IBM Plex Mono',monospace">lat, lng</code></span></span>
+        <input type="text" id="urlInput" placeholder="place.map.kakao.com/838484446   ·   or   map.naver.com/p/entry/place/1976543477" autocomplete="off" spellcheck="false" />
       </label>
 
       <label class="field" id="textField">
@@ -408,7 +408,7 @@
   </section>
 
   <p class="footnote">
-    Coordinates are WGS84, the system Google, Kakao and GPS share. The Google link uses <code>?q=lat,lng</code>, which pins the exact point and sidesteps Korean-address search quality entirely. The Lite path reads Kakao's place page through a public relay, so it's best-effort — fine for spot-checks. Doing thousands of rows? A Kakao <em>REST</em> key in a script is the batch tool, not a browser.
+    Coordinates are WGS84, the system Google, Kakao, Naver and GPS share. The Google link uses <code>?q=lat,lng</code>, which pins the exact point and sidesteps Korean-address search quality entirely. Kakao and Naver place links are read through a public relay, so that path is best-effort — fine for spot-checks. Doing thousands of rows? A Kakao <em>REST</em> key in a script is the batch tool, not a browser.
   </p>
 
 </div>
@@ -702,6 +702,47 @@
     }
     return null;
   }
+  // ---- Naver place link support (best-effort, via the relay; reuses scanForWgs) ----
+  function parseNaverUrl(input){
+    let placeId=null, lat=null, lng=null;
+    if(input){
+      const m = input.match(/place\/(\d{6,})/i) || input.match(/\/(\d{8,})(?:[/?#]|$)/);
+      if(m) placeId=m[1];
+      const la=input.match(/[?&]lat=(-?\d{1,3}\.\d+)/i), ln=input.match(/[?&]lng=(-?\d{1,3}\.\d+)/i);
+      if(la&&ln){ const a=parseFloat(la[1]), b=parseFloat(ln[1]); if(inKorea(a,b)){ lat=a; lng=b; } }
+    }
+    return {placeId,lat,lng};
+  }
+  async function resolveNaver(input){
+    const {placeId,lat,lng}=parseNaverUrl(input);
+    // 1) coordinates already in the link — most reliable, no fetch needed
+    if(lat!=null && lng!=null){
+      return {name: placeId?("Naver place "+placeId):"Naver location", address:"", lat:round7(lat), lng:round7(lng), placeId:null, source:"Naver link (coords in URL)", isPoi:true};
+    }
+    // 2) read the place page(s) through the relay, then scan for a WGS84 pair
+    const urls=[];
+    if(placeId){
+      urls.push("https://m.place.naver.com/place/"+placeId+"/home");
+      urls.push("https://pcmap.place.naver.com/place/"+placeId);
+      urls.push("https://map.naver.com/p/entry/place/"+placeId);
+    }
+    if(input) urls.push(input); // covers naver.me short links and coordinate pages
+    for(const u of urls){
+      const body=await fetchViaProxies(u); if(!body) continue;
+      let parsed=null; try{parsed=JSON.parse(body);}catch(e){parsed=body;}
+      const pt=scanForWgs(parsed);
+      if(pt){
+        let name = placeId?("Naver place "+placeId):"Naver place";
+        if(typeof body==="string"){
+          const t = body.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']{1,100})["']/i) || body.match(/<title>([^<]{1,100})<\/title>/i);
+          if(t){ const cleaned=t[1].replace(/\s*[:\-|]\s*네이버.*$/,"").replace(/\s*[:\-|]\s*Naver.*$/i,"").trim(); if(cleaned) name=cleaned; }
+        }
+        return {name, address:"", lat:round7(pt.lat), lng:round7(pt.lng), placeId:null, source:"Naver place page", isPoi:true};
+      }
+    }
+    return null;
+  }
+
   function searchKeyword(q){
     return new Promise(res=>{ if(!places) return res([]);
       places.keywordSearch(q,(data,status)=>{ if(status!==kakao.maps.services.Status.OK) return res([]);
@@ -718,14 +759,18 @@
   async function resolve(){
     candidates=[]; selected=null; candPanel.style.display="none"; resultEl.style.display="none"; candsEl.innerHTML="";
     const urlRaw=urlInput.value.trim(), textRaw=textInput.value.trim();
-    const placeId=extractPlaceId(urlRaw)||(urlRaw&&/^\d{6,}$/.test(urlRaw)?urlRaw:null);
+    const isNaver = /naver\.(com|me)/i.test(urlRaw);
+    const placeId = isNaver ? null : (extractPlaceId(urlRaw)||(urlRaw&&/^\d{6,}$/.test(urlRaw)?urlRaw:null));
 
-    if(!urlRaw && !textRaw){ setStat("err","Paste a Kakao place link, a name/address, or a lat,lng pair."); return; }
+    if(!urlRaw && !textRaw){ setStat("err","Paste a Kakao or Naver place link, a name/address, or a lat,lng pair."); return; }
 
     const direct=parseLatLng(urlRaw)||parseLatLng(textRaw);
     if(direct){ candidates=[{name:"Manual coordinate",address:"",lat:round7(direct.lat),lng:round7(direct.lng),placeId,source:"Pasted lat,lng",isPoi:false}]; finish(placeId); return; }
 
-    if(placeId){
+    if(isNaver){
+      setStat("work","Reading the Naver place page…",true);
+      const d=await resolveNaver(urlRaw); if(d) candidates.push(d);
+    } else if(placeId){
       setStat("work","Reading the Kakao place page for "+placeId+"…",true);
       const d=await resolveDirect(placeId); if(d) candidates.push(d);
     }
@@ -737,7 +782,9 @@
     candidates=dedupe(candidates);
 
     if(candidates.length===0){
-      if(placeId && !kakaoReady){
+      if(isNaver){
+        setStat("err","Couldn't read coordinates from that Naver link. Use the full place link (map.naver.com/p/entry/place/…), or open the link and paste its name/address or a lat,lng pair. The relay can also be briefly down — try again.");
+      }else if(placeId && !kakaoReady){
         setStat("err", isFileProto
           ? "Couldn't read the place page (the relay may be down or blocked from a local file). Try again, or host the page for the reliable Kakao search — see the Setup guide."
           : "Couldn't read the place page right now. Try again, or turn on Kakao-side view below and search by name/address instead.");
