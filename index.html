@@ -408,7 +408,7 @@
   </section>
 
   <p class="footnote">
-    Coordinates are WGS84, the system Google, Kakao, Naver and GPS share. The Google link uses <code>?q=lat,lng</code>, which pins the exact point and sidesteps Korean-address search quality entirely. Kakao and Naver place links are read through a public relay, so that path is best-effort — fine for spot-checks. Doing thousands of rows? A Kakao <em>REST</em> key in a script is the batch tool, not a browser.
+    Coordinates are WGS84, the system Google, Kakao, Naver and GPS share. The Google link uses <code>?q=lat,lng</code>, which pins the exact point and sidesteps Korean-address search quality entirely. Kakao and Naver place links are read through a public relay, so that path is best-effort — fine for spot-checks. Naver is especially tricky: it serves its coordinates through JavaScript, so a Naver link can come up empty — when it does, paste the place's name or address into the search box to resolve it through Kakao instead. Doing thousands of rows? A Kakao <em>REST</em> key in a script is the batch tool, not a browser.
   </p>
 
 </div>
@@ -502,6 +502,7 @@
   const PROXIES = [
     u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
     u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+    u => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u),
     u => "https://thingproxy.freeboard.io/fetch/" + u
   ];
   proj4.defs("EPSG:5181","+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=500000 +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs");
@@ -722,15 +723,22 @@
     // 2) read the place page(s) through the relay, then scan for a WGS84 pair
     const urls=[];
     if(placeId){
-      urls.push("https://m.place.naver.com/place/"+placeId+"/home");
+      urls.push("https://m.place.naver.com/place/"+placeId);
       urls.push("https://pcmap.place.naver.com/place/"+placeId);
+      urls.push("https://m.place.naver.com/place/"+placeId+"/home");
       urls.push("https://map.naver.com/p/entry/place/"+placeId);
     }
     if(input) urls.push(input); // covers naver.me short links and coordinate pages
     for(const u of urls){
       const body=await fetchViaProxies(u); if(!body) continue;
       let parsed=null; try{parsed=JSON.parse(body);}catch(e){parsed=body;}
-      const pt=scanForWgs(parsed);
+      let pt=scanForWgs(parsed);
+      // Naver sometimes stores mapx/mapy as lng*1e7 / lat*1e7 integers
+      if(!pt && typeof body==="string"){
+        const mm=body.match(/"mapx"\s*:\s*"?(\d{8,10})"?[\s\S]{0,40}?"mapy"\s*:\s*"?(\d{8,9})"?/i)
+              || body.match(/"mapy"\s*:\s*"?(\d{8,9})"?[\s\S]{0,40}?"mapx"\s*:\s*"?(\d{8,10})"?/i);
+        if(mm){ const a=parseInt(mm[1],10)/1e7, b=parseInt(mm[2],10)/1e7; if(inKorea(a,b)) pt={lat:a,lng:b}; else if(inKorea(b,a)) pt={lat:b,lng:a}; }
+      }
       if(pt){
         let name = placeId?("Naver place "+placeId):"Naver place";
         if(typeof body==="string"){
@@ -783,7 +791,7 @@
 
     if(candidates.length===0){
       if(isNaver){
-        setStat("err","Couldn't read coordinates from that Naver link. Use the full place link (map.naver.com/p/entry/place/…), or open the link and paste its name/address or a lat,lng pair. The relay can also be briefly down — try again.");
+        setStat("err","Couldn't read that Naver link — Naver loads its coordinates with JavaScript, so the public relay can't always reach them (Kakao links are simpler and more reliable). Dependable route: copy the place's Korean name or address from Naver and paste it in the “search by name / address” box above — that resolves through Kakao. A pasted lat,lng, or a Naver link that already contains lat=…&lng=…, always works too.");
       }else if(placeId && !kakaoReady){
         setStat("err", isFileProto
           ? "Couldn't read the place page (the relay may be down or blocked from a local file). Try again, or host the page for the reliable Kakao search — see the Setup guide."
